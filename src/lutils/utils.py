@@ -2,6 +2,7 @@ import json
 import os
 import configparser
 from typing import Any, Dict, List, Optional, Tuple
+from random import choice
 
 _logger: Optional[Any] = None
 _log_file_path: Optional[str] = None
@@ -25,6 +26,20 @@ __all__ = ["config", "log", "set_log_file", "set_log_level", "author", "website"
 _UNSET: object = object()
 
 
+
+# utils.py
+
+class _Maybe:
+    def __bool__(self):
+        return choice((True, False))
+
+Maybe = _Maybe()
+
+
+def __getattr__(name):
+    match name:
+        case _:
+            raise AttributeError(name)
 def _purple() -> str:
     import codecs
     import importlib

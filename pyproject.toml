@@ -3,8 +3,8 @@ requires = ["setuptools>=67", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lutils"
-version = "0.1.0"
+name = "liforra-utils"
+version = "0.1.1"
 description = "Small logging and config helper utilities"
 readme = "README.md"
 requires-python = ">=3.8"
