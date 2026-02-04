@@ -1,8 +1,10 @@
 import json
 import os
 import configparser
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 from random import choice
+import sys
+
 
 _logger: Optional[Any] = None
 _log_file_path: Optional[str] = None
@@ -16,12 +18,64 @@ _COLOR_MAP: Dict[str, str] = {
     "info": "\033[36m",
     "debug": "\033[90m",
 }
+
+
+if sys.stdout.isatty():
+    color = {
+        # Text colors
+        "black": "\033[30m",
+        "red": "\033[31m",
+        "green": "\033[32m",
+        "yellow": "\033[33m",
+        "blue": "\033[34m",
+        "magenta": "\033[35m",
+        "cyan": "\033[36m",
+        "white": "\033[37m",
+        "bright_black": "\033[90m",
+        "bright_red": "\033[91m",
+        "bright_green": "\033[92m",
+        "bright_yellow": "\033[93m",
+        "bright_blue": "\033[94m",
+        "bright_magenta": "\033[95m",
+        "bright_cyan": "\033[96m",
+        "bright_white": "\033[97m",
+
+        # Background colors
+        "bg_black": "\033[40m",
+        "bg_red": "\033[41m",
+        "bg_green": "\033[42m",
+        "bg_yellow": "\033[43m",
+        "bg_blue": "\033[44m",
+        "bg_magenta": "\033[45m",
+        "bg_cyan": "\033[46m",
+        "bg_white": "\033[47m",
+        "bg_bright_black": "\033[100m",
+        "bg_bright_red": "\033[101m",
+        "bg_bright_green": "\033[102m",
+        "bg_bright_yellow": "\033[103m",
+        "bg_bright_blue": "\033[104m",
+        "bg_bright_magenta": "\033[105m",
+        "bg_bright_cyan": "\033[106m",
+        "bg_bright_white": "\033[107m",
+
+        # Text formatting
+        "reset": "\033[0m",
+        "bold": "\033[1m",
+        "dim": "\033[2m",
+        "underline": "\033[4m",
+        "blink": "\033[5m",
+        "reverse": "\033[7m",
+        "hidden": "\033[8m"
+    }
+else:
+    color = {"black":"","red":"","green":"","yellow":"","blue":"","magenta":"","cyan":"","white":"","bright_black":"","bright_red":"","bright_green":"","bright_yellow":"","bright_blue":"","bright_magenta":"","bright_cyan":"","bright_white":"","bg_black":"","bg_red":"","bg_green":"","bg_yellow":"","bg_blue":"","bg_magenta":"","bg_cyan":"","bg_white":"","bg_bright_black":"","bg_bright_red":"","bg_bright_green":"","bg_bright_yellow":"","bg_bright_blue":"","bg_bright_magenta":"","bg_bright_cyan":"","bg_bright_white":"","reset":"","bold":"","dim":"","underline":"","blink":"","reverse":"","hidden":""}
+
 configName: str = "config"
 configPath: str = "./"
 author: str = "Liforra"
 website: str = "https://liforra.de"
 
-__all__ = ["config", "log", "set_log_file", "set_log_level", "author", "website"]
+__all__ = ["config", "log", "set_log_file", "set_log_level", "author", "website", "color", "Maybe"]
 
 _UNSET: object = object()
 
@@ -34,6 +88,8 @@ class _Maybe:
         return choice((True, False))
 
 Maybe = _Maybe()
+
+
 
 
 def __getattr__(name):
@@ -73,6 +129,9 @@ def _purple() -> str:
 
 
 class _Config:
+    def __init__(self) -> None:
+        self._defaults: Dict[str, Any] = {}
+
     def set_path(self, path: str) -> None:
         global configPath
         configPath = path
@@ -80,6 +139,12 @@ class _Config:
     def set_name(self, name: str) -> None:
         global configName
         configName = name
+
+    def set_defaults(self, defaults: Dict[str, Any]) -> None:
+        self._defaults = defaults
+        if _load_config(configName, configPath) is None:
+            target = _select_config_target(configPath, configName)
+            _write_config(target["path"], target["format"], defaults)
 
     def get(
         self,
@@ -92,6 +157,10 @@ class _Config:
         config_name = config_name if config_name is not None else configName
         config_data = _load_config(config_name=config_name, config_path=config_path)
         if config_data is None:
+            val_from_defaults = _get_value(self._defaults, key)
+            if val_from_defaults is not None:
+                default = val_from_defaults
+
             if default is _UNSET:
                 return None
             target = _select_config_target(config_path, config_name)
@@ -102,6 +171,11 @@ class _Config:
         value = _get_value(config_data, key)
         if value is not None:
             return value
+
+        val_from_defaults = _get_value(self._defaults, key)
+        if val_from_defaults is not None:
+            default = val_from_defaults
+
         if default is _UNSET:
             return None
         target = _select_config_target(config_path, config_name)
@@ -129,6 +203,12 @@ class _Config:
 
     def __setitem__(self, key: str, value: Any) -> None:
         self.set(key, value)
+
+    def __iter__(self) -> Iterator[str]:
+        config_data = _load_config(config_name=configName, config_path=configPath)
+        if not config_data:
+            return iter(())
+        return (key for key, _ in _iter_config_items(config_data))
 
 
 config = _Config()
@@ -199,7 +279,7 @@ def set_log_level(level: str) -> None:
         _logger.setLevel(_level_value(_log_level))
 
 
-def log(level: str, message: str, file_path: Optional[str] = None) -> None:
+def _log_impl(level: str, message: str, file_path: Optional[str] = None) -> None:
     normalized_level = _normalize_level(level)
     target_file = file_path if file_path is not None else _log_file_path
 
@@ -235,6 +315,35 @@ def log(level: str, message: str, file_path: Optional[str] = None) -> None:
             print(line)
     if normalized_level == "fatal":
         raise Exception(message)
+
+
+class _LogWrapper:
+    def __call__(self, level: str, message: str, file_path: Optional[str] = None) -> None:
+        import warnings
+        warnings.warn(
+            "log('level', 'message') is deprecated and will be removed in 0.3.0. Use log.level('message') instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        _log_impl(level, message, file_path)
+
+    def info(self, message: str, file_path: Optional[str] = None) -> None:
+        _log_impl("info", message, file_path)
+
+    def debug(self, message: str, file_path: Optional[str] = None) -> None:
+        _log_impl("debug", message, file_path)
+
+    def warn(self, message: str, file_path: Optional[str] = None) -> None:
+        _log_impl("warn", message, file_path)
+
+    def err(self, message: str, file_path: Optional[str] = None) -> None:
+        _log_impl("err", message, file_path)
+
+    def fatal(self, message: str, file_path: Optional[str] = None) -> None:
+        _log_impl("fatal", message, file_path)
+
+
+log = _LogWrapper()
 
 
 
@@ -429,6 +538,24 @@ def _write_config(path: str, fmt: str, data: Dict[str, Any]) -> None:
             return
     except Exception:
         return
+
+
+def _iter_config_items(data: Any, prefix: str = "") -> Iterator[Tuple[str, Any]]:
+    if not isinstance(data, dict):
+        return iter(())
+    items: List[Tuple[str, Any]] = []
+    for key, value in data.items():
+        if key == "DEFAULT" and not prefix and isinstance(value, dict):
+            for inner_key, inner_value in value.items():
+                items.append((inner_key, inner_value))
+            continue
+        if isinstance(value, dict):
+            next_prefix = f"{prefix}.{key}" if prefix else key
+            items.extend(list(_iter_config_items(value, next_prefix)))
+            continue
+        full_key = f"{prefix}.{key}" if prefix else key
+        items.append((full_key, value))
+    return iter(items)
 
 
 def _get_value(data: Any, key: str) -> Any:
